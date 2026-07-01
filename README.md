@@ -1,5 +1,5 @@
 # 🧠 Smart Document Hub
-### MidDevz SIH Edition | Saisanjay R | KCT AI & DS | Summer 2026
+
 
 A **production-grade multilingual document intelligence platform** built for SIH 2025 (PS ID: SIH25080).
 
@@ -83,4 +83,4 @@ uvicorn app.main:app --reload
 
 ---
 
-*Built as a Summer 2026 portfolio project by Saisanjay R, KCT AI & DS*
+

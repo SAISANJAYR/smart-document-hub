@@ -5,6 +5,8 @@ uvicorn[standard]==0.32.1
 # ─── Data Validation ──────────────────────────────────
 pydantic==2.10.3
 pydantic-settings==2.6.1
+email-validator>=2.0.0
+
 
 # ─── Database ─────────────────────────────────────────
 motor==3.6.0          # async MongoDB driver
@@ -20,13 +22,13 @@ pdfplumber==0.11.4
 python-docx==1.1.2
 
 # ─── AI / LLM ─────────────────────────────────────────
-langchain==0.3.12
-langchain-google-genai==2.0.7
-langchain-community==0.3.12
-llama-index==0.12.6
-llama-index-vector-stores-chroma==0.4.1
-llama-index-embeddings-google==0.3.1
-chromadb==0.5.23
+langchain
+langchain-google-genai
+langchain-community
+llama-index
+llama-index-vector-stores-chroma
+llama-index-embeddings-google
+chromadb
 
 # ─── NLP ──────────────────────────────────────────────
 langdetect==1.0.9

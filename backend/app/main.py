@@ -99,7 +99,8 @@ async def health_check():
     }
 
 
-# ── Later, we'll add routers here like: ──────────────────────────────────────
-# from app.api.v1 import auth, documents, search, calendar, graph
-# app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-# app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+# ── Include Versioned API Router ──────────────────────────────────────────────
+from app.api.v1 import router as api_v1_router
+
+app.include_router(api_v1_router, prefix="/api/v1")
+
