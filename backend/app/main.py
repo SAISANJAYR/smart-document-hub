@@ -22,9 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 
+from app.db.init_db import init_mongodb
+
 # ── Lifespan: runs code at startup and shutdown ───────────────────────────────
-# This is where we'll later: connect MongoDB, load spaCy model, init ChromaDB
-# For now it just prints a message so you can SEE it working.
+# This is where we connect MongoDB, load spaCy model, init ChromaDB
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── STARTUP ──────────────────────────────────────────────────
@@ -32,7 +33,13 @@ async def lifespan(app: FastAPI):
     print(f"   Environment : {settings.APP_ENV}")
     print(f"   Debug Mode  : {settings.DEBUG}")
     print(f"   Docs URL    : http://localhost:8000/docs\n")
-    # Later: await init_db(), load_spacy_model(), etc.
+    
+    # Initialize Database (MongoDB + Beanie)
+    try:
+        await init_mongodb()
+    except Exception as e:
+        print(f"[ERROR] Failed to connect to MongoDB: {e}")
+        print("[WARNING] The app is running, but database operations will fail until MongoDB is running.")
 
     yield  # ← App runs while waiting here
 

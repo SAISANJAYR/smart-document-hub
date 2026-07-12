@@ -12,6 +12,7 @@ KEY CONCEPTS:
 from datetime import datetime
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
+from beanie import PydanticObjectId
 
 
 # ── Document Base & Response ─────────────────────────────────────────────────
@@ -26,7 +27,7 @@ class DocumentResponse(DocumentBase):
     """
     Detailed response schema for a document.
     """
-    id: str = Field(..., description="Unique database ID of the document")
+    id: PydanticObjectId = Field(..., description="Unique database ID of the document")
     uploaded_by: str = Field(..., description="ID of the user who uploaded the document")
     uploaded_at: datetime = Field(..., description="Timestamp of when the document was uploaded")
     

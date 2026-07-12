@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  db:
+    image: mongo:6.0
+    container_name: mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - smarthub-network
+
+  web:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fastapi-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    depends_on:
+      - db
+    networks:
+      - smarthub-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  smarthub-network:
+    driver: bridge

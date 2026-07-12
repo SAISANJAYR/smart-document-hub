@@ -11,6 +11,7 @@ KEY CONCEPTS:
 
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
+from beanie import PydanticObjectId
 
 
 class UserBase(BaseModel):
@@ -42,7 +43,7 @@ class UserResponse(UserBase):
     Schema for returning User details in API responses.
     Notice we DO NOT include the password here.
     """
-    id: str = Field(..., description="The unique database ID of the user (represented as string)")
+    id: PydanticObjectId = Field(..., description="The unique database ID of the user")
     role: str = Field("viewer", description="User's access control role (viewer, manager, admin)")
     is_active: bool = Field(True, description="Whether the user account is active")
     created_at: datetime = Field(..., description="Timestamp of when the user was created")
@@ -60,6 +61,13 @@ class Token(BaseModel):
     refresh_token: str = Field(..., description="The refresh token used to request new access tokens")
     token_type: str = Field("bearer", description="Token scheme type (always 'bearer')")
     user: UserResponse = Field(..., description="The authenticated user's details")
+
+
+class TokenRefreshRequest(BaseModel):
+    """
+    Schema for requesting a new access token using a refresh token.
+    """
+    refresh_token: str = Field(..., description="The unexpired refresh token")
 
 
 class TokenData(BaseModel):
