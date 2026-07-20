@@ -16,19 +16,25 @@ WHAT IS A ROUTE?
 """
 
 from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-
-
 from app.db.init_db import init_mongodb
+from app.services.redis_cache import redis_service
+from fastapi_limiter import FastAPILimiter
+
+# Configure logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ── Lifespan: runs code at startup and shutdown ───────────────────────────────
 # This is where we connect MongoDB, load spaCy model, init ChromaDB
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── STARTUP ──────────────────────────────────────────────────
+    logger.info(f"Starting up {settings.APP_NAME}...")
     print(f"\n[STARTUP] {settings.APP_NAME} is starting up...")
     print(f"   Environment : {settings.APP_ENV}")
     print(f"   Debug Mode  : {settings.DEBUG}")
@@ -41,11 +47,18 @@ async def lifespan(app: FastAPI):
         print(f"[ERROR] Failed to connect to MongoDB: {e}")
         print("[WARNING] The app is running, but database operations will fail until MongoDB is running.")
 
+    # Initialize Redis
+    await redis_service.connect()
+    
+    # Initialize FastAPILimiter
+    if redis_service.redis_client:
+        await FastAPILimiter.init(redis_service.redis_client)
+
     yield  # ← App runs while waiting here
 
     # ── SHUTDOWN ─────────────────────────────────────────────────
     print("\n[SHUTDOWN] Shutting down Smart Document Hub...")
-    # Later: await close_db(), cleanup tasks, etc.
+    await redis_service.disconnect()
 
 
 # ── Create FastAPI App ────────────────────────────────────────────────────────

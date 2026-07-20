@@ -8,7 +8,7 @@ Now PROTECTED by JWT Authentication!
 
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
 from fastapi import APIRouter, UploadFile, File, Form, status, Query, Depends, BackgroundTasks
 from app.schemas.document import (
     DocumentResponse, 
@@ -26,6 +26,8 @@ from app.models.document import DocumentModel
 from app.core.auth.dependencies import get_current_user
 from app.services.storage import storage_service
 from app.services.extractor import extractor_service
+from app.services.vector_db import vector_db_service
+from app.services.redis_cache import redis_service
 from fastapi import HTTPException
 
 router = APIRouter()
@@ -56,7 +58,7 @@ async def upload_document(
     
     new_doc = DocumentModel(
         filename=filename,
-        file_size=os.path.getsize(file_path),
+        file_size=file.size or 0,
         mime_type=file.content_type or "application/octet-stream",
         file_hash=file_hash,
         storage_path=file_path,
@@ -166,3 +168,42 @@ async def get_document_graph(
             GraphEdge(source="doc_mock_999888", target="doc_mock_777777", weight=0.85, relation_type="similarity")
         ]
     )
+
+
+@router.get("/search", response_model=Dict[str, Any])
+async def search_documents(
+    q: str = Query(..., description="The semantic search query"),
+    top_k: int = Query(5, ge=1, le=20, description="Number of results to return"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Perform a semantic RAG search across all uploaded documents.
+    """
+    try:
+        cache_key = f"search:{q}:{top_k}"
+        
+        # 1. Try to get from Cache
+        cached_results = await redis_service.get_cache(cache_key)
+        if cached_results:
+            return {
+                "query": q,
+                "results": cached_results,
+                "cached": True
+            }
+            
+        # 2. If not in cache, query Vector DB
+        results = vector_db_service.search(query=q, n_results=top_k)
+        
+        # 3. Save to cache (expires in 5 minutes = 300 seconds)
+        await redis_service.set_cache(cache_key, results, expire_seconds=300)
+        
+        return {
+            "query": q,
+            "results": results,
+            "cached": False
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error performing search: {str(e)}"
+        )

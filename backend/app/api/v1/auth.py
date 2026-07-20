@@ -11,11 +11,18 @@ from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
 from app.models.user import User
 from app.core.auth.hashing import get_password_hash, verify_password
 from app.core.auth.jwt import create_access_token, create_refresh_token, ALGORITHM
+from fastapi_limiter.depends import RateLimiter
+from fastapi import Depends
 
 router = APIRouter()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", 
+    response_model=UserResponse, 
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))]
+)
 async def register(user_in: UserCreate):
     """
     Register a new user account.
@@ -48,7 +55,11 @@ async def register(user_in: UserCreate):
     return new_user
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login", 
+    response_model=Token,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))]
+)
 async def login(credentials: UserLogin):
     """
     Authenticate user and return access/refresh tokens.

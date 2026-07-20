@@ -12,6 +12,15 @@ services:
     networks:
       - smarthub-network
 
+  redis:
+    image: redis:alpine
+    container_name: redis-cache
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - smarthub-network
+
   web:
     build: 
       context: ./backend
@@ -24,6 +33,7 @@ services:
       - ./.env
     depends_on:
       - db
+      - redis
     networks:
       - smarthub-network
 

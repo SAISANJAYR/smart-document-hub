@@ -4,6 +4,7 @@ import os
 import asyncio
 from beanie import PydanticObjectId
 from app.models.document import DocumentModel
+from app.services.vector_db import vector_db_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -102,19 +103,48 @@ class ExtractorService:
             else:
                 extracted_text = "Unsupported file type for extraction yet."
             
+            # We have the text, now let's detect the language!
+            # It's fast, so we don't need a separate thread for it.
+            detected_lang = "en"  # Default fallback
+            if extracted_text.strip():
+                try:
+                    from langdetect import detect
+                    detected_lang = detect(extracted_text)
+                except Exception as lang_e:
+                    logger.warning(f"Could not detect language for doc {document_id}, defaulting to en: {str(lang_e)}")
+                    
             # Save the extracted text to a .txt file next to the original file
             text_file_path = file_path + ".txt"
             with open(text_file_path, "w", encoding="utf-8") as f:
                 f.write(extracted_text)
                 
-            # Update the document status to completed
+            # --- NEW WEEK 4 LOGIC: Vector Database Ingestion ---
+            # Send the text to ChromaDB for chunking and embedding!
+            # We run this in the background thread too so it doesn't block the API.
+            try:
+                metadata = {
+                    "filename": doc.filename,
+                    "mime_type": doc.mime_type,
+                    "language": detected_lang
+                }
+                vector_db_service.add_document(
+                    document_id=str(doc.id), 
+                    text=extracted_text, 
+                    metadata=metadata
+                )
+            except Exception as vdb_e:
+                logger.error(f"Failed to ingest document into vector db: {vdb_e}")
+                
+            # Update the document status to completed and save the language
             doc.processing_status = "completed"
+            doc.language = detected_lang
             await doc.save()
             logger.info(f"Successfully processed document {document_id}")
             
         except Exception as e:
             doc.processing_status = "failed"
             doc.error_message = str(e)
+            
             await doc.save()
             logger.error(f"Failed processing document {document_id}: {str(e)}")
 
