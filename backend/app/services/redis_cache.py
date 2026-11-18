@@ -18,13 +18,15 @@ class RedisService:
             self.redis_client = redis.from_url(
                 settings.REDIS_URL, 
                 encoding="utf-8", 
-                decode_responses=True
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
             )
             # Ping to verify connection
             await self.redis_client.ping()
             logger.info(f"Successfully connected to Redis at {settings.REDIS_URL}")
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            logger.warning(f"Redis unavailable ({e}); caching disabled, rate limits in-memory.")
             self.redis_client = None
 
     async def disconnect(self):
@@ -50,6 +52,15 @@ class RedisService:
         except Exception as e:
             logger.error(f"Error fetching cache key '{key}': {e}")
             return None
+
+    async def delete_prefix(self, prefix: str):
+        if not self.redis_client:
+            return
+        try:
+            async for key in self.redis_client.scan_iter(f"{prefix}*"):
+                await self.redis_client.delete(key)
+        except Exception:
+            pass
 
     async def set_cache(self, key: str, value: Any, expire_seconds: int = 300) -> bool:
         """

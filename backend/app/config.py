@@ -1,20 +1,9 @@
 """
-config.py — Application Configuration
---------------------------------------
-Pydantic BaseSettings reads values from your .env file automatically.
-No more hardcoded secrets. No more "oops I pushed my API key to GitHub."
-
-HOW IT WORKS:
-  1. You put secrets in .env (which is gitignored)
-  2. Pydantic reads .env at startup
-  3. Your code accesses settings.GEMINI_API_KEY — clean and safe
-
-CONCEPT: Pydantic validates the types too! If you put DEBUG="yes" in .env
-         and the field is `DEBUG: bool`, Pydantic converts "yes" → True.
+config.py — Application configuration, loaded from environment / .env via pydantic-settings.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,27 +13,29 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # ── Security ─────────────────────────────────────────────────────────────
-    SECRET_KEY: str = "supersecretkey"  # Keep this safe in prod!
+    SECRET_KEY: str = "dev-secret-key-change-before-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    
-    # Redis configuration
-    REDIS_URL: str = "redis://localhost:6379"
-
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost"
 
     # ── Database ─────────────────────────────────────────────────────────────
+    # Set MONGODB_URL="mock://" to run fully in-memory (no MongoDB needed).
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "smart_document_hub"
+    # If the real MongoDB is unreachable at startup, fall back to an in-memory DB.
+    MONGODB_FALLBACK_TO_MOCK: bool = True
 
     # ── AI / LLM ─────────────────────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # ── Vector DB ────────────────────────────────────────────────────────────
-    CHROMA_HOST: str = "localhost"
-    CHROMA_PORT: int = 8001
+    CHROMA_PATH: str = "./chroma_data"
+    # all-MiniLM puts unrelated official documents around 0.35–0.45; 0.5+ is a real topical link.
+    GRAPH_SIMILARITY_THRESHOLD: float = 0.50
 
-    # ── Background Tasks ─────────────────────────────────────────────────────
+    # ── Cache / rate limiting ────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379"
 
     # ── File Storage ─────────────────────────────────────────────────────────
@@ -52,23 +43,27 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
 
     # ── Translation ──────────────────────────────────────────────────────────
-    TRANSLATOR: str = "google"
+    TRANSLATOR: str = "google"  # google | gemini | none
 
-    # Pydantic v2 way: tell it to load from .env file
+    # ── Demo ─────────────────────────────────────────────────────────────────
+    # Seeds a demo account + sample documents on startup when the DB is empty.
+    SEED_DEMO: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
 
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-# lru_cache means this function runs ONCE and the result is cached.
-# Every time code calls get_settings(), it gets the SAME Settings object.
-# This is the standard pattern — you don't want to re-read .env 1000 times.
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
 
 
-# Convenient shortcut: from app.config import settings
 settings = get_settings()

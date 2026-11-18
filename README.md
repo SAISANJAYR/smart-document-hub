@@ -1,86 +1,92 @@
-# 🧠 Smart Document Hub
+# Smart Document Hub
 
+**Ask your documents, in your language.** A multilingual document-intelligence platform: upload circulars, contracts and scanned notices in English or Malayalam, and it reads them, finds the deadlines, links related files, and answers questions with the exact passages it used.
 
-A **production-grade multilingual document intelligence platform** built for SIH 2025 (PS ID: SIH25080).
-
----
-
-## ✨ 4 Unique USPs
-
-| # | Feature | Tech |
-|---|---------|------|
-| 1 | **Dynamic Calendar** — auto-extract dates/deadlines from every document | spaCy NER + Gemini + FullCalendar.js |
-| 2 | **Document Graph** — interactive knowledge graph linking related docs | ChromaDB cosine similarity + D3.js |
-| 3 | **Tag-Based Search** — AI-generated tags + semantic + keyword search | LangChain + MongoDB |
-| 4 | **True Bilingual AI** — understands & responds in English + Malayalam | EasyOCR + IndicTrans2 + Gemini |
+Built for **Smart India Hackathon 2025** (PS SIH25080). This repository is the polished, end-to-end version of the hackathon prototype.
 
 ---
 
-## 🏗️ Architecture
+## What it does
+
+| | Feature | How it works |
+|---|---|---|
+| 1 | **Dynamic calendar** | spaCy NER + regex find every date; `dateparser` normalises it; Gemini (or keyword rules) classifies it as deadline / payment / meeting / hearing / expiry / takes-effect and assigns urgency. Month view, agenda, `.ics` export. |
+| 2 | **Knowledge graph** | Each document's centroid embedding (mean of its ChromaDB chunk vectors) is compared by cosine similarity with every other document; shared tags and entities nudge borderline pairs. Interactive force-directed view that explains *why* two files are linked. |
+| 3 | **Tag-based search** | Tags (type, department, topics), a summary and named entities are generated on upload — Gemini with a Pydantic-validated JSON schema, or spaCy noun-chunks + rules offline. Search combines tag filters, semantic search and keyword matching, cached in Redis. |
+| 4 | **Bilingual AI** | Malayalam is detected by Unicode script, translated to English for indexing, and questions asked in Malayalam are answered back in Malayalam — with both versions visible. The interface itself switches between English and മലയാളം. |
+
+Every answer comes with a **visible trace** — language detection, translation, retrieval, generation, grounding check — each step timed, plus cited source passages. Every upload records what the pipeline did to it, step by step.
+
+## Screens
+
+Landing · Dashboard · Documents (upload, filters, tag cloud) · Document detail (text + translation, dates, entities, related files, pipeline trace) · **Ask** workspace (scope / question + answer / "How the system answered") · Search · Calendar · Knowledge graph · History.
+
+## Architecture
 
 ```
-CLIENT (Next.js 14)
-        ↓
-API GATEWAY (FastAPI + JWT + CORS + Rate Limiting)
-        ↓
-CORE SERVICES (Ingestion · RAG · Calendar · Graph · Tags)
-        ↓
-AI LAYER (LangChain · LlamaIndex · spaCy · Gemini · EasyOCR)
-        ↓
-STORAGE (MongoDB · ChromaDB · Redis · /uploads)
+React (Vite) ──► FastAPI ─┬─ Auth: JWT access + refresh, bcrypt, role checks, rate limiting
+                          ├─ Ingestion pipeline (background task, per-step trace)
+                          │    extract → detect language → translate → chunk + embed
+                          │    → tags/summary/entities → deadlines → graph links
+                          ├─ RAG engine: retrieve (ChromaDB) → Gemini / extractive answer → cite → translate back
+                          └─ Storage: MongoDB (Beanie) · ChromaDB · Redis · /uploads
 ```
 
----
+**Runs without any external service.** No Gemini key → spaCy rules and an IDF-weighted extractive answerer. No MongoDB → automatic fallback to an in-memory database. No Redis → in-process rate limits, no cache. Add the services and the same code uses them.
 
-## 🛠️ Tech Stack
+## Run it locally
 
-**Backend**: FastAPI · Pydantic v2 · Motor · Beanie ODM  
-**AI/RAG**: LangChain · LlamaIndex · ChromaDB · Google Gemini  
-**NLP**: spaCy · EasyOCR · IndicTrans2 · langdetect  
-**Frontend**: Next.js 14 · Tailwind CSS · shadcn/ui · D3.js · FullCalendar  
-**DevOps**: Docker · Docker Compose · GitHub Actions · Nginx · Render  
-
----
-
-## 🚀 Quick Start
+Requirements: Python 3.12, Node 20+.
 
 ```bash
-# 1. Clone
-git clone https://github.com/yourusername/smart-document-hub.git
-cd smart-document-hub
-
-# 2. Setup Python environment
+# Backend
 python -m venv .venv
-.venv\Scripts\activate      # Windows
+.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r backend/requirements.txt
-
-# 3. Configure environment
-cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
-
-# 4. Run the API
+python -m spacy download en_core_web_sm
 cd backend
-uvicorn app.main:app --reload
-
-# 5. Open API docs
-# http://localhost:8000/docs
+uvicorn app.main:app --reload     # http://localhost:8000/docs
 ```
 
----
+```bash
+# Frontend (new terminal)
+cd frontend
+npm install
+npm run dev                       # http://localhost:5173
+```
 
-## 📅 Build Progress
+On first start the API seeds a demo account — **demo@dochub.dev / demo12345** — with seven sample district-office documents (DOCX, PDF, TXT, one in Malayalam) whose dates are relative to today, so the calendar is always live. Click **Try the demo account** on the landing page.
 
-- [x] Week 1: Project scaffold + FastAPI basics
-- [ ] Week 2: JWT Auth + User system
-- [ ] Week 3: Document ingestion pipeline
-- [ ] Week 4: ChromaDB + LlamaIndex RAG
-- [ ] Week 5: LangChain + Tag system (USP 3)
-- [ ] Week 6: Calendar (USP 1) + Document Graph (USP 2)
-- [ ] Week 7: Next.js frontend
-- [ ] Week 8: Bilingual AI (USP 4) + Admin
-- [ ] Week 9: Testing + CI/CD + Cloud deploy
-- [ ] Week 10: Polish + Portfolio
+Optional: copy `.env.example` to `backend/.env` and set `GEMINI_API_KEY` for LLM-generated tags, date classification and answers.
 
----
+## Run with Docker
 
+```bash
+cp .env.example .env              # add GEMINI_API_KEY if you have one
+docker compose up --build         # http://localhost
+```
 
+Runs MongoDB, Redis, the API (with Tesseract + Malayalam for scans) and the frontend behind nginx.
+
+## Tests
+
+```bash
+cd backend
+pytest
+```
+
+Covers auth, upload validation and per-user isolation, Malayalam detection, deadline extraction and classification, local tagging, and the extractive answerer.
+
+## Tech
+
+**Backend** FastAPI · Pydantic v2 · Beanie / Motor · ChromaDB (all-MiniLM-L6-v2) · Google Gemini (`google-genai`) · spaCy · dateparser · langdetect · pdfplumber · python-docx · Tesseract / EasyOCR · Redis
+**Frontend** React 19 · Vite · React Router · react-force-graph · Noto Serif / Noto Sans (+ Malayalam) type system
+**Ops** Docker Compose · nginx
+
+## API
+
+Interactive docs at `/docs`. Main routes under `/api/v1`:
+
+`POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `GET /auth/me`
+`POST /documents/upload` · `GET /documents` · `GET /documents/{id}` · `GET /documents/{id}/text` · `GET /documents/{id}/file` · `PATCH /documents/{id}/tags` · `POST /documents/{id}/reprocess` · `DELETE /documents/{id}`
+`POST /documents/query` · `GET /documents/queries` · `GET /documents/search` · `GET /documents/tags` · `GET /documents/calendar` · `GET /documents/graph` · `GET /documents/stats`

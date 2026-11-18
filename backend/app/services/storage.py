@@ -1,49 +1,39 @@
-import os
-import shutil
+"""
+storage.py — Content-addressed local file storage (files are named by SHA-256).
+Swap for an S3 implementation with the same interface in production.
+"""
+
 import hashlib
+import os
 from typing import Tuple
-from fastapi import UploadFile
+
+from fastapi import HTTPException, UploadFile
+
 from app.config import settings
 
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+
 class LocalStorageService:
-    """
-    Handles saving uploaded files to the local disk.
-    Later, this can be swapped with an S3StorageService.
-    """
-    
-    def __init__(self, base_dir: str = "uploads"):
-        # We store files relative to the project root
-        self.base_dir = os.path.join(os.getcwd(), base_dir)
+    def __init__(self, base_dir: str):
+        self.base_dir = base_dir if os.path.isabs(base_dir) else os.path.join(BACKEND_ROOT, base_dir)
         os.makedirs(self.base_dir, exist_ok=True)
-        
-    async def save_file(self, file: UploadFile) -> Tuple[str, str]:
-        """
-        Reads the file, calculates its SHA-256 hash, and saves it to disk.
-        Returns:
-            Tuple containing: (file_path, file_hash)
-        """
-        # 1. Read file contents to compute hash
+
+    async def save_file(self, file: UploadFile, max_bytes: int | None = None) -> Tuple[str, str, int]:
+        """Returns (file_path, sha256, size_in_bytes)."""
         content = await file.read()
-        
-        # 2. Compute SHA-256 hash (used to prevent duplicate uploads)
+        if max_bytes and len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"File is larger than {max_bytes // (1024 * 1024)} MB.")
+        if not content:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
         file_hash = hashlib.sha256(content).hexdigest()
-        
-        # 3. Create a unique filename based on the hash
-        # We append the original extension so the OS knows what type of file it is
-        original_ext = os.path.splitext(file.filename)[1] if file.filename else ".bin"
-        safe_filename = f"{file_hash}{original_ext}"
-        
-        file_path = os.path.join(self.base_dir, safe_filename)
-        
-        # 4. Save to disk if it doesn't already exist
+        ext = os.path.splitext(file.filename or "")[1].lower() or ".bin"
+        file_path = os.path.join(self.base_dir, f"{file_hash}{ext}")
         if not os.path.exists(file_path):
             with open(file_path, "wb") as f:
                 f.write(content)
-                
-        # 5. Reset the file cursor so other parts of the app (like OCR) can read it again if needed
         await file.seek(0)
-        
-        return file_path, file_hash
+        return file_path, file_hash, len(content)
 
-# Create a singleton instance we can use across the app
-storage_service = LocalStorageService()
+
+storage_service = LocalStorageService(settings.UPLOAD_DIR)

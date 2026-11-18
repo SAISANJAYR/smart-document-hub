@@ -1,45 +1,40 @@
-version: '3.8'
-
 services:
-  db:
-    image: mongo:6.0
-    container_name: mongodb
-    restart: always
-    ports:
-      - "27017:27017"
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
     volumes:
-      - mongodb_data:/data/db
-    networks:
-      - smarthub-network
+      - mongo_data:/data/db
 
   redis:
-    image: redis:alpine
-    container_name: redis-cache
-    restart: always
-    ports:
-      - "6379:6379"
-    networks:
-      - smarthub-network
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379
+      MONGODB_FALLBACK_TO_MOCK: "false"
+      CORS_ORIGINS: http://localhost
+    volumes:
+      - uploads:/app/uploads
+      - chroma:/app/chroma_data
+    depends_on:
+      - mongo
+      - redis
 
   web:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: fastapi-backend
-    restart: always
+    build: ./frontend
+    restart: unless-stopped
     ports:
-      - "8000:8000"
-    env_file:
-      - ./.env
+      - "80:80"
     depends_on:
-      - db
-      - redis
-    networks:
-      - smarthub-network
+      - api
 
 volumes:
-  mongodb_data:
-
-networks:
-  smarthub-network:
-    driver: bridge
+  mongo_data:
+  uploads:
+  chroma:

@@ -35,3 +35,8 @@ npm-debug.log*
 # ─── OS ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# Vector store and local uploads
+chroma_data/
+backend/uploads/
+frontend/dist/

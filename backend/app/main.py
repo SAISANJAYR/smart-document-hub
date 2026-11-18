@@ -1,126 +1,90 @@
 """
-main.py — FastAPI Application Factory
---------------------------------------
-This is the entry point of your entire backend.
-
-KEY CONCEPTS IN THIS FILE:
-  1. FastAPI() — creates your app instance (like express() in Node)
-  2. @app.get("/") — a "decorator" that registers a URL route
-  3. lifespan — startup/shutdown logic (connect DB, load models)
-  4. CORS — allows your Next.js frontend (different port) to call this API
-
-WHAT IS A ROUTE?
-  When a browser/app calls GET http://localhost:8000/health,
-  FastAPI matches that to the function decorated with @app.get("/health")
-  and runs it. That's all a web framework does — match URLs to functions.
+main.py — FastAPI application entry point.
 """
 
-from contextlib import asynccontextmanager
+import asyncio
 import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db.init_db import init_mongodb
+from app.core.agents.llm import llm
+from app.db.init_db import db_state, init_mongodb
 from app.services.redis_cache import redis_service
-from fastapi_limiter import FastAPILimiter
 
-# Configure logger
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── Lifespan: runs code at startup and shutdown ───────────────────────────────
-# This is where we connect MongoDB, load spaCy model, init ChromaDB
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── STARTUP ──────────────────────────────────────────────────
-    logger.info(f"Starting up {settings.APP_NAME}...")
-    print(f"\n[STARTUP] {settings.APP_NAME} is starting up...")
-    print(f"   Environment : {settings.APP_ENV}")
-    print(f"   Debug Mode  : {settings.DEBUG}")
-    print(f"   Docs URL    : http://localhost:8000/docs\n")
-    
-    # Initialize Database (MongoDB + Beanie)
-    try:
-        await init_mongodb()
-    except Exception as e:
-        print(f"[ERROR] Failed to connect to MongoDB: {e}")
-        print("[WARNING] The app is running, but database operations will fail until MongoDB is running.")
-
-    # Initialize Redis
+    logger.info("Starting %s (%s)", settings.APP_NAME, settings.APP_ENV)
+    await init_mongodb()
     await redis_service.connect()
-    
-    # Initialize FastAPILimiter
-    if redis_service.redis_client:
-        await FastAPILimiter.init(redis_service.redis_client)
 
-    yield  # ← App runs while waiting here
+    if db_state["mode"] == "memory":
+        # A fresh in-memory DB means every stored vector is orphaned; start clean.
+        from app.services.vector_db import vector_db_service
 
-    # ── SHUTDOWN ─────────────────────────────────────────────────
-    print("\n[SHUTDOWN] Shutting down Smart Document Hub...")
+        if vector_db_service.available:
+            try:
+                vector_db_service.client.delete_collection("document_chunks")
+                vector_db_service.collection = None
+            except Exception:
+                pass
+
+    seed_task = None
+    if settings.SEED_DEMO:
+        from app.seed import seed_demo
+
+        seed_task = asyncio.create_task(seed_demo())
+
+    # Warm spaCy in the background so the first upload isn't slow.
+    from app.core.agents.nlp import get_nlp
+
+    asyncio.get_running_loop().run_in_executor(None, get_nlp)
+
+    yield
+
+    if seed_task and not seed_task.done():
+        seed_task.cancel()
     await redis_service.disconnect()
 
 
-# ── Create FastAPI App ────────────────────────────────────────────────────────
 app = FastAPI(
     title=settings.APP_NAME,
-    description="A production-grade multilingual document intelligence platform.",
-    version="1.0.0",
-    docs_url="/docs",       # Swagger UI  → http://localhost:8000/docs
-    redoc_url="/redoc",     # ReDoc UI    → http://localhost:8000/redoc
+    description="Multilingual document intelligence: RAG Q&A, deadline extraction, knowledge graph, AI tags.",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
-
-# ── CORS Middleware ───────────────────────────────────────────────────────────
-# CORS = Cross-Origin Resource Sharing
-# Without this, your Next.js app on port 3000 can't call this API on port 8000
-# Browsers block cross-origin requests by default (security feature).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",   # Next.js dev server
-        "http://localhost:80",     # Nginx in production
-    ],
-    allow_credentials=True,       # Allow cookies (needed for JWT in cookies)
-    allow_methods=["*"],          # GET, POST, PUT, DELETE, etc.
-    allow_headers=["*"],          # Authorization, Content-Type, etc.
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
-
 @app.get("/", tags=["Root"])
 async def root():
-    """
-    Root endpoint. Returns basic app info.
-    The 'async' keyword means FastAPI can handle other requests
-    while waiting for this one — important for I/O heavy apps like ours.
-    """
-    return {
-        "app": settings.APP_NAME,
-        "version": "1.0.0",
-        "status": "running",
-        "docs": "/docs",
-    }
+    return {"app": settings.APP_NAME, "version": app.version, "docs": "/docs"}
 
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """
-    Health check endpoint.
-    Used by Docker, Kubernetes, and load balancers to know if the app is alive.
-    Convention: return 200 OK when healthy.
-    """
     return {
         "status": "ok",
         "environment": settings.APP_ENV,
-        "debug": settings.DEBUG,
+        "database": db_state["mode"],
+        "cache": "redis" if redis_service.redis_client else "off",
+        "llm": llm.model_name if llm.available else None,
     }
 
 
-# ── Include Versioned API Router ──────────────────────────────────────────────
-from app.api.v1 import router as api_v1_router
+from app.api.v1 import router as api_v1_router  # noqa: E402
 
 app.include_router(api_v1_router, prefix="/api/v1")
-

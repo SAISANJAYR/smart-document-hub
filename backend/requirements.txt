@@ -1,53 +1,46 @@
-# ─── Web Framework ────────────────────────────────────
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
+# ─── Web ───────────────────────────────────────────────
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+httpx>=0.28
 
-# ─── Data Validation ──────────────────────────────────
-pydantic==2.10.3
-pydantic-settings==2.6.1
-email-validator>=2.0.0
-
+# ─── Validation / config ──────────────────────────────
+pydantic>=2.9
+pydantic-settings>=2.6
+email-validator>=2.0
 
 # ─── Database ─────────────────────────────────────────
-motor==3.6.0          # async MongoDB driver
-beanie==1.27.0        # MongoDB ODM built on Motor + Pydantic
+motor>=3.6
+beanie>=1.27,<2          # 2.x drops Motor and breaks the mongomock fallback
+mongomock-motor>=0.0.34  # in-memory MongoDB for local demo + tests
 
 # ─── Auth ─────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.12   # needed for form/file uploads
+python-jose[cryptography]>=3.3
+bcrypt>=4.0
 
-# ─── Document Processing ──────────────────────────────
-pdfplumber==0.11.4
-python-docx==1.1.2
+# ─── Documents ────────────────────────────────────────
+pdfplumber>=0.11
+python-docx>=1.1
+pillow>=10.0
 
-# ─── AI / LLM ─────────────────────────────────────────
-langchain
-langchain-google-genai
-langchain-community
-llama-index
-llama-index-vector-stores-chroma
-llama-index-embeddings-google
-chromadb
+# ─── AI / retrieval ───────────────────────────────────
+google-genai>=1.0        # Gemini (optional: set GEMINI_API_KEY)
+chromadb>=0.5
+langchain-text-splitters>=0.3
+numpy>=1.26
 
 # ─── NLP ──────────────────────────────────────────────
-langdetect==1.0.9
-spacy==3.8.3
+spacy>=3.7               # + python -m spacy download en_core_web_sm
+dateparser>=1.2
+langdetect>=1.0.9
 
-# ─── Background Tasks ─────────────────────────────────
-celery==5.4.0
-redis==5.2.1
-
-# ─── Rate Limiting ────────────────────────────────────
-slowapi==0.1.9
-
-# ─── HTTP ─────────────────────────────────────────────
-httpx==0.28.1
+# ─── Cache / rate limiting ────────────────────────────
+redis>=5.0
 
 # ─── Testing ──────────────────────────────────────────
-pytest==8.3.4
-pytest-asyncio==0.24.0
+pytest>=8.0
+pytest-asyncio>=0.24
 
-# ─── Code Quality ─────────────────────────────────────
-black==24.10.0
-isort==5.13.2
+# ─── Optional OCR (large; install when you need scanned images) ──
+# easyocr
+# pytesseract            # + Tesseract with the 'mal' language pack for Malayalam scans

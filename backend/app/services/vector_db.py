@@ -1,116 +1,123 @@
-import os
-import chromadb
-from chromadb.config import Settings
-import logging
-from typing import List, Dict, Any
+"""
+vector_db.py — ChromaDB wrapper: chunking, embedding, filtered semantic search and
+per-document embedding centroids (used to build the knowledge graph).
+"""
 
-# We use langchain's text splitter to chunk documents intelligently
+import logging
+import os
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+
 class VectorDBService:
     def __init__(self):
-        # Initialize a persistent local ChromaDB client
-        # The database will be stored in backend/chroma_data/
-        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chroma_data")
-        
+        self.client = None
+        self.collection = None
+        self.splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=150)
+
+    def _ensure(self):
+        if self.collection is not None:
+            return True
         try:
-            self.client = chromadb.PersistentClient(path=db_path)
-            
-            # Get or create the collection for storing our document vectors
-            # ChromaDB uses sentence-transformers default (all-MiniLM-L6-v2) automatically if installed!
+            import chromadb
+
+            path = settings.CHROMA_PATH
+            if not os.path.isabs(path):
+                path = os.path.join(BACKEND_ROOT, path)
+            self.client = chromadb.PersistentClient(path=path)
             self.collection = self.client.get_or_create_collection(
-                name="document_chunks",
-                metadata={"hnsw:space": "cosine"} # Use cosine similarity for better semantic search
+                name="document_chunks", metadata={"hnsw:space": "cosine"}
             )
-            logger.info("Successfully connected to local ChromaDB.")
+            return True
         except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB: {e}")
-            self.client = None
-            self.collection = None
+            logger.error("Failed to initialise ChromaDB: %s", e)
+            return False
 
-    def add_document(self, document_id: str, text: str, metadata: Dict[str, Any] = None):
-        """
-        Takes raw text, chunks it, and saves the vectors to ChromaDB.
-        """
-        if not self.collection:
-            logger.error("ChromaDB not initialized, skipping vector ingestion.")
-            return
+    @property
+    def available(self) -> bool:
+        return self._ensure()
 
-        # 1. Chunk the text
-        # We split text into chunks of 1000 characters, with 200 characters overlap
-        # Overlap ensures we don't accidentally cut a sentence or context in half.
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-        )
-        
-        chunks = text_splitter.split_text(text)
-        
+    def add_document(self, document_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> int:
+        if not self._ensure():
+            return 0
+        chunks = self.splitter.split_text(text)
         if not chunks:
-            logger.warning(f"No text chunks generated for document {document_id}")
-            return
-
-        # 2. Prepare data for ChromaDB
-        documents = []
-        metadatas = []
-        ids = []
-        
-        for i, chunk in enumerate(chunks):
-            documents.append(chunk)
-            
-            # Combine provided metadata with chunk-specific metadata
-            chunk_meta = metadata.copy() if metadata else {}
-            chunk_meta["document_id"] = document_id
-            chunk_meta["chunk_index"] = i
-            metadatas.append(chunk_meta)
-            
-            # Create a unique ID for this chunk
+            return 0
+        self.delete_document(document_id)
+        metas, ids = [], []
+        for i, _ in enumerate(chunks):
+            meta = {k: v for k, v in (metadata or {}).items() if isinstance(v, (str, int, float, bool))}
+            meta.update({"document_id": document_id, "chunk_index": i})
+            metas.append(meta)
             ids.append(f"{document_id}_chunk_{i}")
-
-        # 3. Insert into ChromaDB
-        # ChromaDB automatically handles embedding the `documents` list locally!
-        try:
+        # Batch to keep memory flat on big documents.
+        for start in range(0, len(chunks), 64):
             self.collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
+                documents=chunks[start : start + 64],
+                metadatas=metas[start : start + 64],
+                ids=ids[start : start + 64],
             )
-            logger.info(f"Successfully added {len(chunks)} chunks to Vector DB for document {document_id}")
-        except Exception as e:
-            logger.error(f"Failed to insert chunks into ChromaDB: {e}")
+        return len(chunks)
 
-    def search(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
-        """
-        Search for the most relevant document chunks based on a text query.
-        """
-        if not self.collection:
-            return []
-            
+    def delete_document(self, document_id: str):
+        if not self._ensure():
+            return
         try:
-            # Query ChromaDB (it automatically embeds the query and performs ANN search)
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=n_results
-            )
-            
-            # Format the results into a clean list of dictionaries
-            formatted_results = []
-            if results["documents"] and len(results["documents"]) > 0:
-                for i in range(len(results["documents"][0])):
-                    formatted_results.append({
-                        "text": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "distance": results["distances"][0][i] if "distances" in results and results["distances"] else None
-                    })
-                    
-            return formatted_results
-            
+            self.collection.delete(where={"document_id": document_id})
         except Exception as e:
-            logger.error(f"Semantic search failed: {e}")
-            return []
+            logger.warning("Chroma delete failed for %s: %s", document_id, e)
 
-# Singleton instance
+    def search(self, query: str, n_results: int = 5, document_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        if not self._ensure():
+            return []
+        if document_ids is not None and len(document_ids) == 0:
+            return []
+        where = None
+        if document_ids:
+            where = {"document_id": {"$in": document_ids}} if len(document_ids) > 1 else {"document_id": document_ids[0]}
+        try:
+            total = self.collection.count()
+            if total == 0:
+                return []
+            res = self.collection.query(query_texts=[query], n_results=min(n_results, total), where=where)
+        except Exception as e:
+            logger.error("Semantic search failed: %s", e)
+            return []
+        out = []
+        for i in range(len(res["documents"][0]) if res.get("documents") else 0):
+            dist = res["distances"][0][i] if res.get("distances") else None
+            out.append(
+                {
+                    "text": res["documents"][0][i],
+                    "metadata": res["metadatas"][0][i],
+                    "distance": dist,
+                    "score": round(max(0.0, 1.0 - dist), 4) if dist is not None else None,
+                }
+            )
+        return out
+
+    def document_centroid(self, document_id: str) -> Optional[np.ndarray]:
+        if not self._ensure():
+            return None
+        try:
+            got = self.collection.get(where={"document_id": document_id}, include=["embeddings"])
+            embs = got.get("embeddings")
+            if embs is None or len(embs) == 0:
+                return None
+            v = np.asarray(embs, dtype=np.float32).mean(axis=0)
+            n = np.linalg.norm(v)
+            return v / n if n else None
+        except Exception as e:
+            logger.warning("Centroid fetch failed for %s: %s", document_id, e)
+            return None
+
+
 vector_db_service = VectorDBService()

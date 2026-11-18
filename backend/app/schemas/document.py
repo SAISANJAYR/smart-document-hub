@@ -1,121 +1,201 @@
 """
-document.py — Document Pydantic Schemas
----------------------------------------
-This file defines validation schemas for document upload metadata, Q&A queries,
-citations, knowledge graphs, and extracted calendar events.
-
-KEY CONCEPTS:
-  1. Optional fields for metadata that gets populated in background tasks (e.g. tags, language).
-  2. Nested schemas for complex structured responses (like graph nodes, citation sources, and calendar events).
+document.py — API schemas for documents, Q&A, calendar events and the knowledge graph.
+Kept separate from the Beanie models so internal fields (e.g. storage_path) never leak.
 """
 
 from datetime import datetime
-from typing import List, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional
+
 from beanie import PydanticObjectId
+from pydantic import BaseModel, Field
 
 
-# ── Document Base & Response ─────────────────────────────────────────────────
+class ProcessingStepOut(BaseModel):
+    key: str
+    label: str
+    status: str
+    ms: int
+    detail: Optional[str] = None
 
-class DocumentBase(BaseModel):
-    filename: str = Field(..., description="Original name of the uploaded file")
-    file_size: int = Field(..., description="File size in bytes")
-    mime_type: str = Field(..., description="MIME type of the file (e.g., application/pdf)")
+
+class EntityOut(BaseModel):
+    text: str
+    label: str
 
 
-class DocumentResponse(DocumentBase):
-    """
-    Detailed response schema for a document.
-    """
-    id: PydanticObjectId = Field(..., description="Unique database ID of the document")
-    uploaded_by: str = Field(..., description="ID of the user who uploaded the document")
-    uploaded_at: datetime = Field(..., description="Timestamp of when the document was uploaded")
-    
-    # AI/NLP extracted fields (may be null/empty initially during background tasks)
-    language: str | None = Field(None, description="Detected dominant language (ISO 639-1 code)")
-    detected_tags: List[str] = Field(default_factory=list, description="AI-extracted classification tags")
-    processing_status: str = Field("pending", description="Status of the extraction pipeline (pending, processing, completed, failed)")
-    error_message: str | None = Field(None, description="Pipeline error logs if processing failed")
+class DocumentResponse(BaseModel):
+    id: PydanticObjectId
+    filename: str
+    file_size: int
+    mime_type: str
+    uploaded_by: str
+    uploaded_at: datetime
+    page_count: Optional[int] = None
+    char_count: int = 0
+    chunk_count: int = 0
+    language: Optional[str] = None
+    translated: bool = False
+    detected_tags: List[str] = Field(default_factory=list)
+    doc_type: Optional[str] = None
+    department: Optional[str] = None
+    summary: Optional[str] = None
+    processing_status: str = "pending"
+    error_message: Optional[str] = None
+    processed_at: Optional[datetime] = None
 
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
+
+
+class DeadlineEventResponse(BaseModel):
+    id: str
+    document_id: str
+    document_filename: str
+    event_date: datetime
+    event_title: str
+    event_type: str = "date"
+    description: Optional[str] = None
+    urgency: str = "medium"
+
+
+class RelatedDocument(BaseModel):
+    id: str
+    filename: str
+    weight: float
+    shared: List[str] = Field(default_factory=list)
+
+
+class DocumentDetailResponse(DocumentResponse):
+    text_preview: Optional[str] = None
+    entities: List[EntityOut] = Field(default_factory=list)
+    processing_steps: List[ProcessingStepOut] = Field(default_factory=list)
+    events: List[DeadlineEventResponse] = Field(default_factory=list)
+    related: List[RelatedDocument] = Field(default_factory=list)
+
+
+class DocumentTextResponse(BaseModel):
+    id: str
+    language: Optional[str]
+    original: str
+    english: Optional[str] = None
 
 
 class DocumentTagUpdate(BaseModel):
-    """
-    Request schema to manually override or add tags to a document.
-    """
-    tags: List[str] = Field(..., description="Complete list of tags for the document")
+    tags: List[str] = Field(..., max_length=20)
 
 
-# ── RAG / Query Endpoints ───────────────────────────────────────────────────
+# ── Q&A ────────────────────────────────────────────────────────────────────
 
 class DocumentQueryRequest(BaseModel):
-    """
-    Request schema for querying a document or a set of documents.
-    """
-    question: str = Field(..., min_length=3, description="The query/question to ask the AI engine", examples=["What is the contract termination clause?"])
-    document_ids: List[str] | None = Field(None, description="Optional list of document IDs to restrict search context. If empty, searches all documents user has access to.")
+    question: str = Field(..., min_length=3, max_length=1000, examples=["When is the last date to submit utilisation certificates?"])
+    document_ids: Optional[List[str]] = Field(None, description="Restrict to these documents; empty = all of yours")
+    answer_language: Literal["auto", "en", "ml"] = "auto"
 
 
 class CitationSource(BaseModel):
-    """
-    Source citation details indicating where the AI got its information.
-    """
-    document_id: str = Field(..., description="The ID of the source document")
-    filename: str = Field(..., description="The name of the source document")
-    page_number: int | None = Field(None, description="Page number of the citation if applicable")
-    text_snippet: str = Field(..., description="A snippet of the matching text that was retrieved")
-    similarity_score: float | None = Field(None, description="Vector search similarity score")
+    n: int
+    document_id: str
+    filename: str
+    chunk_index: Optional[int] = None
+    text_snippet: str
+    similarity_score: Optional[float] = None
+
+
+class TraceStep(BaseModel):
+    key: str
+    label: str
+    status: str
+    ms: int
+    detail: str = ""
+    engine: Optional[str] = None
 
 
 class DocumentQueryResponse(BaseModel):
-    """
-    Response schema returning the generated answer and source citations.
-    """
-    answer: str = Field(..., description="The generated response from the AI model")
-    language: str = Field("en", description="The language of the response")
-    citations: List[CitationSource] = Field(default_factory=list, description="List of source document citations used to generate the answer")
+    id: Optional[str] = None
+    question: str
+    answer: str
+    answer_en: str
+    language: str
+    question_language: str
+    question_en: str
+    confidence: float
+    engine: str
+    citations: List[CitationSource]
+    all_citations: List[CitationSource]
+    trace: List[TraceStep]
+    created_at: Optional[datetime] = None
 
 
-# ── USP 1: Extracted Deadlines / Calendar Events ──────────────────────────────
-
-class DeadlineEventResponse(BaseModel):
-    """
-    Extracted calendar date event.
-    """
-    id: str = Field(..., description="Unique database ID of the calendar event")
-    document_id: str = Field(..., description="ID of the document this deadline was extracted from")
-    document_filename: str = Field(..., description="Filename of the source document")
-    event_date: datetime = Field(..., description="The extracted deadline/milestone date")
-    event_title: str = Field(..., description="A short summary of the event/actionable item")
-    description: str | None = Field(None, description="Contextual description of the deadline")
-    urgency: str = Field("medium", description="Urgency level (low, medium, high)")
-    
-    model_config = {
-        "from_attributes": True
-    }
+class QueryHistoryItem(BaseModel):
+    id: str
+    question: str
+    answer: str
+    question_language: str
+    answer_language: str
+    confidence: float
+    engine: str
+    citations: List[Dict[str, Any]]
+    trace: List[Dict[str, Any]]
+    created_at: datetime
 
 
-# ── USP 2: Knowledge Graph ───────────────────────────────────────────────────
+# ── Search ──────────────────────────────────────────────────────────────────
+
+class SearchHit(BaseModel):
+    document: DocumentResponse
+    score: float
+    matched_by: List[str]
+    snippets: List[str] = Field(default_factory=list)
+
+
+class SearchResponse(BaseModel):
+    query: str
+    tags: List[str]
+    hits: List[SearchHit]
+    took_ms: int
+    cached: bool = False
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+# ── Graph ───────────────────────────────────────────────────────────────────
 
 class GraphNode(BaseModel):
-    id: str = Field(..., description="Unique identifier for the node (usually the Document ID)")
-    label: str = Field(..., description="Display label for the node (usually the Filename)")
-    group: str = Field("document", description="Group category for styling nodes (e.g. document, tag)")
+    id: str
+    label: str
+    group: str = "document"
+    doc_type: Optional[str] = None
+    language: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    degree: int = 0
 
 
 class GraphEdge(BaseModel):
-    source: str = Field(..., description="Source node ID")
-    target: str = Field(..., description="Target node ID")
-    weight: float = Field(..., description="Similarity weight between 0.0 and 1.0")
-    relation_type: str = Field("similarity", description="The type of relationship (e.g. similarity, shared_tag)")
+    source: str
+    target: str
+    weight: float
+    relation_type: str = "similarity"
+    shared: List[str] = Field(default_factory=list)
 
 
 class KnowledgeGraphResponse(BaseModel):
-    """
-    Data structure representing the nodes and edges of the document network.
-    """
-    nodes: List[GraphNode] = Field(..., description="List of graph nodes")
-    edges: List[GraphEdge] = Field(..., description="List of graph edges connecting the nodes")
+    nodes: List[GraphNode]
+    edges: List[GraphEdge]
+
+
+# ── Dashboard ───────────────────────────────────────────────────────────────
+
+class StatsResponse(BaseModel):
+    documents: int
+    processed: int
+    processing: int
+    failed: int
+    languages: Dict[str, int]
+    upcoming_deadlines: int
+    high_urgency: int
+    connections: int
+    questions_asked: int
+    tags: int
+    engine: Dict[str, Any]

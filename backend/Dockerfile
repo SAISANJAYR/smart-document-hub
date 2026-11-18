@@ -1,23 +1,19 @@
-# Use the official lightweight Python image
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Set the working directory inside the container
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
-# Copy the requirements file first (to leverage Docker cache)
+# Tesseract with English + Malayalam for scanned documents
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-mal \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
+RUN pip install --no-cache-dir uv \
+ && uv pip install --system --no-cache -r requirements.txt pytesseract \
+ && python -m spacy download en_core_web_sm
 
-# Install uv for blazingly fast dependency resolution
-RUN pip install uv
-
-# Install dependencies using uv to avoid pip backtracking loops
-RUN uv pip install --system --no-cache -r requirements.txt
-
-# Copy the rest of the application code
 COPY . .
 
-# Expose port 8000 for the FastAPI server
 EXPOSE 8000
-
-# Start Uvicorn when the container launches
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
